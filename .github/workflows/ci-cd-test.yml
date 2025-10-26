@@ -1,0 +1,110 @@
+name: Aegis Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Pull Aegis image from Docker Hub
+      run: |
+        docker pull aegis/aegis:latest
+        docker tag aegis/aegis:latest aegis:latest
+      
+    - name: Run security scan
+      run: |
+        mkdir -p results
+        docker run --rm \
+          -v "$(pwd)/results:/app/results:rw" \
+          -v "$(pwd):/app/target:ro" \
+          -e SUPABASE_URL="${SUPABASE_URL}" \
+          -e SUPABASE_KEY="${SUPABASE_KEY}" \
+          aegis:latest \
+          --api-key "${{ secrets.AEGIS_API_KEY }}" \
+          --parallel .
+      
+    - name: Upload scan results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: results/
+        retention-days: 30
+      
+    - name: Display scan summary
+      if: always()
+      run: |
+        if [ -f results/scan_summary_*.json ]; then
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          PACKAGES=$(cat results/scan_summary_*.json | jq -r '.summary.packages_found // 0')
+          VULNS=$(cat results/scan_summary_*.json | jq -r '.summary.vulnerabilities_in_packages // 0')
+          SECRETS=$(cat results/scan_summary_*.json | jq -r '.summary.secrets_found // 0')
+          ISSUES=$(cat results/scan_summary_*.json | jq -r '.summary.code_issues // 0')
+          
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Packages Found | $PACKAGES |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚠️  Vulnerabilities | $VULNS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔑 Secrets Found | $SECRETS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐛 Code Issues | $ISSUES |" >> $GITHUB_STEP_SUMMARY
+        fi
+      
+    - name: Fail on critical issues
+      run: |
+        if [ -f results/scan_summary_*.json ]; then
+          VULNS=$(cat results/scan_summary_*.json | jq -r '.summary.vulnerabilities_in_packages // 0')
+          SECRETS=$(cat results/scan_summary_*.json | jq -r '.summary.secrets_found // 0')
+          
+          if [ "$VULNS" -gt 0 ]; then
+            echo "🚨 Found $VULNS vulnerabilities - failing build"
+            exit 1
+          fi
+          
+          if [ "$SECRETS" -gt 0 ]; then
+            echo "🚨 Found $SECRETS secrets - failing build"
+            exit 1
+          fi
+        fi
+      
+    - name: Comment on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          if (fs.existsSync('results/scan_summary_*.json')) {
+            const summary = JSON.parse(require('fs').readFileSync('results/scan_summary_*.json', 'utf8'));
+            
+            const body = `## 🔒 Security Scan Results
+            
+            - 📦 Packages: ${summary.summary.packages_found}
+            - ⚠️  Vulnerabilities: ${summary.summary.vulnerabilities_in_packages}
+            - 🔑 Secrets: ${summary.summary.secrets_found}
+            - 🐛 Code Issues: ${summary.summary.code_issues}
+            
+            [View full results](./actions/runs/${process.env.GITHUB_RUN_ID})`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+          }
