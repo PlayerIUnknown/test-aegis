@@ -24,8 +24,8 @@ jobs:
       
     - name: Pull Aegis image from Docker Hub
       run: |
-        docker pull aegis/aegis:latest
-        docker tag aegis/aegis:latest aegis:latest
+        docker pull playerunknown23/aegis:latest
+        docker tag playerunknown23/aegis:latest aegis:latest
       
     - name: Run security scan
       run: |
