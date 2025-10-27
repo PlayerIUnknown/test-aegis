@@ -112,35 +112,3 @@ jobs:
             });
           }
     
-    - name: Comment on commit
-      if: github.event_name == 'push'
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const fs = require('fs');
-          
-          // Find scan summary file
-          const testDir = 'results';
-          if (!fs.existsSync(testDir)) return;
-          
-          const files = fs.readdirSync(testDir).filter(f => f.startsWith('scan_summary_') && f.endsWith('.json'));
-          if (files.length > 0) {
-            const summaryPath = `${testDir}/${files[0]}`;
-            const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-            
-            const body = `##  Security Scan Results
-            
-            -  Packages: ${summary.summary.packages_found}
-            -   Vulnerabilities: ${summary.summary.vulnerabilities_in_packages}
-            -  Secrets: ${summary.summary.secrets_found}
-            -  Code Issues: ${summary.summary.code_issues}
-            
-            [View full results](./actions/runs/${process.env.GITHUB_RUN_ID})`;
-            
-            github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: body
-            });
-          }
