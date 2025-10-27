@@ -1,6 +1,6 @@
 import requests
 import os
-# Testing the change
+# Debugging git repo
 # Use environment variables for sensitive data
 API_KEY = os.getenv("API_KEY", "")
 PASSWORD = os.getenv("PASSWORD", "")
