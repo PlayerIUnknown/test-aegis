@@ -35,6 +35,9 @@ jobs:
           -v "$(pwd):/app/target:ro" \
           -e SUPABASE_URL="${SUPABASE_URL}" \
           -e SUPABASE_KEY="${SUPABASE_KEY}" \
+          -e GITHUB_REPOSITORY="${{ github.repository }}" \
+          -e GITHUB_REF="${{ github.ref }}" \
+          -e GITHUB_SHA="${{ github.sha }}" \
           aegis:latest \
           --api-key "${{ secrets.AEGIS_API_KEY }}" \
           --parallel .
@@ -51,7 +54,7 @@ jobs:
       if: always()
       run: |
         if [ -f results/scan_summary_*.json ]; then
-          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "##  Security Scan Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           PACKAGES=$(cat results/scan_summary_*.json | jq -r '.summary.packages_found // 0')
@@ -61,10 +64,10 @@ jobs:
           
           echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 📦 Packages Found | $PACKAGES |" >> $GITHUB_STEP_SUMMARY
-          echo "| ⚠️  Vulnerabilities | $VULNS |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔑 Secrets Found | $SECRETS |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🐛 Code Issues | $ISSUES |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Packages Found | $PACKAGES |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Vulnerabilities | $VULNS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Secrets Found | $SECRETS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Code Issues | $ISSUES |" >> $GITHUB_STEP_SUMMARY
         fi
       
     - name: Fail on critical issues
@@ -92,12 +95,12 @@ jobs:
           if (fs.existsSync('results/scan_summary_*.json')) {
             const summary = JSON.parse(require('fs').readFileSync('results/scan_summary_*.json', 'utf8'));
             
-            const body = `## 🔒 Security Scan Results
+            const body = `##  Security Scan Results
             
-            - 📦 Packages: ${summary.summary.packages_found}
-            - ⚠️  Vulnerabilities: ${summary.summary.vulnerabilities_in_packages}
-            - 🔑 Secrets: ${summary.summary.secrets_found}
-            - 🐛 Code Issues: ${summary.summary.code_issues}
+            -  Packages: ${summary.summary.packages_found}
+            -   Vulnerabilities: ${summary.summary.vulnerabilities_in_packages}
+            -  Secrets: ${summary.summary.secrets_found}
+            -  Code Issues: ${summary.summary.code_issues}
             
             [View full results](./actions/runs/${process.env.GITHUB_RUN_ID})`;
             
@@ -105,6 +108,39 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
+              body: body
+            });
+          }
+    
+    - name: Comment on commit
+      if: github.event_name == 'push'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Find scan summary file
+          const testDir = 'results';
+          if (!fs.existsSync(testDir)) return;
+          
+          const files = fs.readdirSync(testDir).filter(f => f.startsWith('scan_summary_') && f.endsWith('.json'));
+          if (files.length > 0) {
+            const summaryPath = `${testDir}/${files[0]}`;
+            const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+            
+            const body = `##  Security Scan Results
+            
+            -  Packages: ${summary.summary.packages_found}
+            -   Vulnerabilities: ${summary.summary.vulnerabilities_in_packages}
+            -  Secrets: ${summary.summary.secrets_found}
+            -  Code Issues: ${summary.summary.code_issues}
+            
+            [View full results](./actions/runs/${process.env.GITHUB_RUN_ID})`;
+            
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
               body: body
             });
           }
