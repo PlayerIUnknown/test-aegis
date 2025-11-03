@@ -7,17 +7,17 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-env:
-  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-
 jobs:
   security-scan:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: read
+      
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better scanning
       
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -25,22 +25,31 @@ jobs:
     - name: Pull Aegis image from Docker Hub
       run: |
         docker pull playerunknown23/aegis:latest
-        docker tag playerunknown23/aegis:latest aegis:latest
       
     - name: Run security scan
+      env:
+        AEGIS_API_KEY: ${{ secrets.AEGIS_API_KEY }}
+        CONFIG_API_URL: ${{ secrets.CONFIG_API_URL }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REF: ${{ github.ref }}
+        GITHUB_SHA: ${{ github.sha }}
       run: |
         mkdir -p results
         docker run --rm \
-          -v "$(pwd)/results:/app/results:rw" \
           -v "$(pwd):/app/target:ro" \
-          -e SUPABASE_URL="${SUPABASE_URL}" \
-          -e SUPABASE_KEY="${SUPABASE_KEY}" \
-          -e GITHUB_REPOSITORY="${{ github.repository }}" \
-          -e GITHUB_REF="${{ github.ref }}" \
-          -e GITHUB_SHA="${{ github.sha }}" \
-          aegis:latest \
-          --api-key "${{ secrets.AEGIS_API_KEY }}" \
-          --parallel .
+          -v "$(pwd)/results:/app/results:rw" \
+          -e AEGIS_API_KEY="$AEGIS_API_KEY" \
+          -e CONFIG_API_URL="$CONFIG_API_URL" \
+          -e GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+          -e GITHUB_REF="$GITHUB_REF" \
+          -e GITHUB_SHA="$GITHUB_SHA" \
+          playerunknown23/aegis:latest \
+          /app/target \
+          --api-key "$AEGIS_API_KEY" \
+          ${CONFIG_API_URL:+--config-api-url "$CONFIG_API_URL"} \
+          --parallel
+        
+        # Quality gate failure will exit with code 1, failing the build
       
     - name: Upload scan results
       if: always()
@@ -54,61 +63,30 @@ jobs:
       if: always()
       run: |
         if [ -f results/scan_summary_*.json ]; then
-          echo "##  Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          PACKAGES=$(cat results/scan_summary_*.json | jq -r '.summary.packages_found // 0')
-          VULNS=$(cat results/scan_summary_*.json | jq -r '.summary.vulnerabilities_in_packages // 0')
-          SECRETS=$(cat results/scan_summary_*.json | jq -r '.summary.secrets_found // 0')
-          ISSUES=$(cat results/scan_summary_*.json | jq -r '.summary.code_issues // 0')
+          cat results/scan_summary_*.json | jq -r '
+            "**Summary:**\n" +
+            "- Packages Found (SBOM): \(.summary.packages_found)\n" +
+            "- Vulnerabilities in Packages (SCA): \(.summary.vulnerabilities_in_packages)\n" +
+            "- Secrets Found: \(.summary.secrets_found)\n" +
+            "- Code Vulnerabilities: \(.summary.code_vulnerabilities)\n" +
+            "\n**Severity Breakdown:**\n" +
+            "- Critical: \(.summary.critical_severity)\n" +
+            "- High: \(.summary.high_severity)\n" +
+            "- Medium: \(.summary.medium_severity)\n" +
+            "- Low: \(.summary.low_severity)\n"
+          ' >> $GITHUB_STEP_SUMMARY
           
-          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "|  Packages Found | $PACKAGES |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Vulnerabilities | $VULNS |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Secrets Found | $SECRETS |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Code Issues | $ISSUES |" >> $GITHUB_STEP_SUMMARY
-        fi
-      
-    - name: Fail on critical issues
-      run: |
-        if [ -f results/scan_summary_*.json ]; then
-          VULNS=$(cat results/scan_summary_*.json | jq -r '.summary.vulnerabilities_in_packages // 0')
-          SECRETS=$(cat results/scan_summary_*.json | jq -r '.summary.secrets_found // 0')
-          
-          if [ "$VULNS" -gt 0 ]; then
-            echo "🚨 Found $VULNS vulnerabilities - failing build"
-            exit 1
-          fi
-          
-          if [ "$SECRETS" -gt 0 ]; then
-            echo "🚨 Found $SECRETS secrets - failing build"
-            exit 1
+          # Check for quality gate status in metadata if available
+          QUALITY_GATE=$(cat results/scan_summary_*.json | jq -r '.metadata.quality_gate_passed // empty')
+          if [ -n "$QUALITY_GATE" ]; then
+            if [ "$QUALITY_GATE" = "true" ]; then
+              echo "\n✅ **Quality Gate: PASSED**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "\n❌ **Quality Gate: FAILED**" >> $GITHUB_STEP_SUMMARY
+              cat results/scan_summary_*.json | jq -r '.metadata.quality_gate_reasons[]? | "- \(.)"' >> $GITHUB_STEP_SUMMARY
+            fi
           fi
         fi
-      
-    - name: Comment on PR
-      if: github.event_name == 'pull_request'
-      uses: actions/github-script@v6
-      with:
-        script: |
-          if (fs.existsSync('results/scan_summary_*.json')) {
-            const summary = JSON.parse(require('fs').readFileSync('results/scan_summary_*.json', 'utf8'));
-            
-            const body = `##  Security Scan Results
-            
-            -  Packages: ${summary.summary.packages_found}
-            -   Vulnerabilities: ${summary.summary.vulnerabilities_in_packages}
-            -  Secrets: ${summary.summary.secrets_found}
-            -  Code Issues: ${summary.summary.code_issues}
-            
-            [View full results](./actions/runs/${process.env.GITHUB_RUN_ID})`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
-          }
-    
