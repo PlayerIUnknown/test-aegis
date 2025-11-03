@@ -4,6 +4,7 @@ import os
 # Use environment variables for sensitive data
 API_KEY = os.getenv("API_KEY", "")
 PASSWORD = os.getenv("PASSWORD", "")
+google-key = "AIzassdssdjfkjfaklbadbalksbdlkda"
 
 def make_request(url):
     """Make a secure request"""
