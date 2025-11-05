@@ -110,4 +110,4 @@ if __name__ == "__main__":
     results = search_users("test")
     authenticated = authenticate_user("admin", "password")
 
-    #Re run with new semgrep schema 6
+    #Re run with new semgrep schema 7
