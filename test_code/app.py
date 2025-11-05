@@ -109,3 +109,5 @@ if __name__ == "__main__":
     user = get_user_by_id("1")
     results = search_users("test")
     authenticated = authenticate_user("admin", "password")
+
+    #Re run with new semgrep schema
