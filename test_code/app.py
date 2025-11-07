@@ -110,4 +110,4 @@ if __name__ == "__main__":
     results = search_users("test")
     authenticated = authenticate_user("admin", "password")
 
-    #Re run with new extraction logic with context lines
+    #Re run with updated quality gates
